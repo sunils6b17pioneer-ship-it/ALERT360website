@@ -1,0 +1,189 @@
+
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ALERT360 Weather Map</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#071426;color:#eef8ff;font:15px Arial,sans-serif;padding:14px}
+.head,.card{background:#102944;border:1px solid #29445c;border-radius:16px;padding:16px;margin-bottom:12px}
+.head{background:linear-gradient(130deg,#123c56,#102944)}
+h1{margin:0;color:#4de1e7}
+h2{font-size:23px;margin:9px 0}
+.muted,small{color:#a7bbcd;line-height:1.5}
+.controls{display:flex;gap:8px;flex-wrap:wrap}
+select,button{padding:12px;border-radius:10px;border:1px solid #29445c;font-size:15px}
+select{background:#071426;color:white;flex:1}
+button{background:#4de1e7;color:#071426;font-weight:bold}
+#status{font-size:12px;color:#6ee7ae;margin-top:10px}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.metric{font-size:27px;font-weight:bold;margin:8px 0}
+.label{font-size:11px;color:#a7bbcd}
+#map{height:370px;border-radius:12px;overflow:hidden;background:#0a1b2c}
+.risk{border:1px solid #29445c;background:#091a2d;border-radius:10px;padding:12px;margin:8px 0}
+.risk b{display:block}
+.links a{display:block;padding:10px 0;color:#4de1e7;text-decoration:none}
+.notice{font-size:12px;line-height:1.5;background:#29241b;color:#ffdfab;border-radius:10px;padding:12px}
+.wide{grid-column:1/-1}
+.hour{display:flex;justify-content:space-between;gap:8px;padding:10px 0;border-bottom:1px solid #29445c;font-size:12px}
+.foot{font-size:11px;color:#a7bbcd;text-align:center;line-height:1.5}
+@media(min-width:800px){
+body{max-width:1100px;margin:auto}
+.grid{grid-template-columns:repeat(4,minmax(0,1fr))}
+.wide{grid-column:span 2}
+.mapcard{grid-column:span 3}
+.riskcard{grid-column:span 1}
+}
+.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:#102944;color:#eef8ff}
+</style>
+</head>
+<body>
+<header class="head">
+<div style="font-size:11px;letter-spacing:2px;color:#4de1e7">WEATHER INTELLIGENCE</div>
+<h1>◈ ALERT360</h1>
+<h2>Know the weather, area by area.</h2>
+<p class="muted">Interactive city map • Rainfall • Temperature • Humidity • Wind</p>
+<div class="controls">
+<input id="citySearch" type="search" placeholder="Search any city worldwide (e.g. Mumbai, Kathmandu, Tokyo)" value="Chennai" style="flex:1;min-width:190px;padding:12px;border-radius:10px;border:1px solid #29445c;background:#071426;color:white;font-size:15px">
+<button id="searchBtn">⌕ Search city</button>
+<button id="refresh">↻ Refresh</button>
+</div>
+<div id="status">Loading weather…</div>
+</header>
+
+<div class="grid">
+<div class="card"><div class="label">CITY TEMPERATURE</div><div class="metric" id="temp">--°C</div><small>Current forecast</small></div>
+<div class="card"><div class="label">RAIN NEXT 24 HOURS</div><div class="metric" id="rain">-- mm</div><small>Forecast total</small></div>
+<div class="card"><div class="label">FEELS LIKE</div><div class="metric" id="feels">--°C</div><small>Apparent temperature</small></div>
+<div class="card"><div class="label">HUMIDITY</div><div class="metric" id="hum">--%</div><small>Relative humidity</small></div>
+
+<div class="card wide mapcard">
+<h3>🗺️ Interactive weather map</h3>
+<div id="map"></div>
+<p class="muted">Tap coloured circles to see that forecast point. Green = lower rainfall; amber = moderate; red = heavier forecast rainfall. Map tiles © OpenStreetMap contributors.</p>
+</div>
+
+<div class="card riskcard">
+<h3>⚠️ Risk monitor</h3>
+<div class="risk"><b id="rainTitle">Rain indicator loading</b><small id="rainText">Forecast estimate only.</small></div>
+<div class="risk"><b id="heatTitle">Heat indicator loading</b><small id="heatText">Forecast estimate only.</small></div>
+<div class="risk"><b id="windTitle">Wind indicator loading</b><small id="windText">Not a cyclone prediction.</small></div>
+</div>
+
+<div class="card wide"><h3>⏱️ Next 6 hours</h3><div id="hours" class="muted">Waiting for forecast…</div></div>
+
+<div class="card wide">
+<h3>🛟 Official emergency sources</h3>
+<div class="links">
+<a href="https://mausam.imd.gov.in/" target="_blank">↗ India Meteorological Department</a>
+<a href="https://sachet.ndma.gov.in/" target="_blank">↗ Sachet disaster alerts</a>
+<a href="https://ndma.gov.in/" target="_blank">↗ National Disaster Management Authority</a>
+</div>
+</div>
+
+<div class="card wide">
+<div class="notice">Important: map points are model forecast estimates, not rain-gauge measurements. Risk colours are educational indicators, not official warnings. For emergencies, follow official authorities.</div>
+</div>
+</div>
+
+<p class="foot">ALERT360 school expo prototype • Weather forecast: Open-Meteo • Map: OpenStreetMap</p>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+let selectedCity={name:"Chennai, Tamil Nadu, India",lat:13.0827,lon:80.2707};
+const offsets=[[-.18,-.18],[-.18,0],[-.18,.18],[0,-.18],[0,0],[0,.18],[.18,-.18],[.18,0],[.18,.18]];
+let map=null,marks=[];
+function msg(t){document.getElementById("status").textContent=t}
+function color(r){return r>=50?"#ff626f":r>=20?"#ffc46b":"#45d89a"}
+
+async function load(){
+ if(!map){msg("Map library not loaded. Check internet and reload.");return}
+ const c=selectedCity;
+ document.getElementById("refresh").disabled=true;
+ msg("Loading forecast points around "+c.name+"…");
+ try{
+ const coords=offsets.map(o=>[c.lat+o[0],c.lon+o[1]]);
+ const url="https://api.open-meteo.com/v1/forecast?latitude="+coords.map(p=>p[0]).join(",")+"&longitude="+coords.map(p=>p[1]).join(",")+"&current=temperature_2m,relative_humidity_2m,apparent_temperature,wind_speed_10m&hourly=temperature_2m,precipitation,precipitation_probability,wind_speed_10m&forecast_days=2&timezone=auto";
+ const response=await fetch(url);
+ if(!response.ok)throw Error("Weather API unavailable");
+ let ds=await response.json();
+ if(!Array.isArray(ds))ds=[ds];
+ marks.forEach(m=>map.removeLayer(m));marks=[];
+ map.setView([c.lat,c.lon],10);
+ let maxR=0,maxT=-99,maxW=0;
+ ds.forEach((d,i)=>{
+ const cur=d.current,h=d.hourly;
+ const ix=Math.max(0,h.time.findIndex(t=>t>=cur.time));
+ const r=h.precipitation.slice(ix,ix+24).reduce((a,b)=>a+(b||0),0);
+ maxR=Math.max(maxR,r);maxT=Math.max(maxT,cur.temperature_2m);maxW=Math.max(maxW,cur.wind_speed_10m);
+ const m=L.circleMarker(coords[i],{radius:i===4?10:8,color:"#fff",weight:2,fillColor:color(r),fillOpacity:.9}).addTo(map);
+ m.bindPopup("<b>"+c.name+" forecast point "+(i+1)+"</b><br>Temperature: "+cur.temperature_2m.toFixed(1)+"°C<br>Feels like: "+cur.apparent_temperature.toFixed(1)+"°C<br>Humidity: "+cur.relative_humidity_2m+"%<br>Next 24h rain: "+r.toFixed(1)+" mm<br>Wind: "+cur.wind_speed_10m+" km/h");
+ marks.push(m);
+ });
+ const d=ds[4]||ds[0],cur=d.current,h=d.hourly;
+ const ix=Math.max(0,h.time.findIndex(t=>t>=cur.time));
+ const r=h.precipitation.slice(ix,ix+24).reduce((a,b)=>a+(b||0),0);
+ document.getElementById("temp").textContent=Math.round(cur.temperature_2m)+"°C";
+ document.getElementById("rain").textContent=r.toFixed(1)+" mm";
+ document.getElementById("feels").textContent=Math.round(cur.apparent_temperature)+"°C";
+ document.getElementById("hum").textContent=cur.relative_humidity_2m+"%";
+ document.getElementById("rainTitle").textContent=maxR>=50?"Heavier rainfall indicator":maxR>=20?"Moderate rainfall indicator":"Lower forecast rainfall";
+ document.getElementById("rainText").textContent="Highest sampled 24h rainfall: "+maxR.toFixed(1)+" mm.";
+ document.getElementById("heatTitle").textContent=maxT>=38?"High heat indicator":maxT>=33?"Warm conditions":"Lower temperature indicator";
+ document.getElementById("heatText").textContent="Highest sampled current temperature: "+maxT.toFixed(1)+"°C.";
+ document.getElementById("windTitle").textContent=maxW>=60?"High wind indicator":maxW>=35?"Elevated wind indicator":"Lower wind indicator";
+ document.getElementById("windText").textContent="Highest sampled current wind: "+maxW.toFixed(1)+" km/h. Not an official warning.";
+ const box=document.getElementById("hours");box.innerHTML="";
+ for(let j=ix;j<Math.min(ix+6,h.time.length);j++){
+ let row=document.createElement("div");row.className="hour";
+ let a=document.createElement("span"),b=document.createElement("span");
+ a.textContent=new Date(h.time[j]).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
+ b.textContent=Math.round(h.temperature_2m[j])+"°C · Rain "+Number(h.precipitation[j]).toFixed(1)+" mm · "+(h.precipitation_probability?.[j]??"--")+"% chance";
+ row.append(a,b);box.append(row);
+ }
+ msg(c.name+" • weather forecast loaded at "+new Date().toLocaleTimeString()+". Model estimates, not street-level thermometer readings.");
+ }catch(e){msg("Could not load forecast. Check your internet and try again.")}
+ finally{document.getElementById("refresh").disabled=false}
+}
+
+async function searchCity(){
+ const q=document.getElementById("citySearch").value.trim();
+ if(q.length<2){msg("Type a city name first.");return}
+ document.getElementById("searchBtn").disabled=true;
+ msg("Finding city: "+q+"…");
+ try{
+ const url="https://geocoding-api.open-meteo.com/v1/search?name="+encodeURIComponent(q)+"&count=10&language=en&format=json";
+ const response=await fetch(url);
+ if(!response.ok)throw Error("Location search unavailable");
+ const data=await response.json();
+ if(!data.results||!data.results.length){msg("City not found. Try adding state or country, e.g. Springfield, Illinois, USA.");return}
+ let place=data.results[0];
+ if(data.results.length>1){
+ const choices=data.results.map((x,i)=>(i+1)+". "+x.name+(x.admin1?", "+x.admin1:"")+(x.country?", "+x.country:""));
+ const pick=prompt("Choose the matching city by number:\n"+choices.join("\n"),"1");
+ if(pick===null)return;
+ const n=parseInt(pick,10);
+ if(!Number.isInteger(n)||n<1||n>data.results.length){msg("Invalid city choice. Search again.");return}
+ place=data.results[n-1];
+ }
+ selectedCity={name:[place.name,place.admin1,place.country].filter(Boolean).join(", "),lat:place.latitude,lon:place.longitude};
+ await load();
+ }catch(e){msg("Could not search city. Check your internet and try again.")}
+ finally{document.getElementById("searchBtn").disabled=false}
+}
+
+if(window.L){
+ map=L.map("map").setView([13.0827,80.2707],10);
+ L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18,attribution:"© OpenStreetMap contributors"}).addTo(map);
+ load();
+}else{msg("Map library did not load. Check internet and reload.")}
+
+document.getElementById("refresh").addEventListener("click",load);
+document.getElementById("searchBtn").addEventListener("click",searchCity);
+document.getElementById("citySearch").addEventListener("keydown",e=>{if(e.key==="Enter")searchCity()});
+</script>
+</body>
+</html>
